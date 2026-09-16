@@ -13,12 +13,20 @@ from telegram.ext import (
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# حساب المدير
+ADMIN_ID = 5428742205
+
+# النجاح يحتاج أكثر من 60%
+# 16 من 25 = 64%
+PASS_SCORE = 16
+
+
 # =========================================================
-# 75 جملة - 3 مستويات - 25 جملة لكل مستوى
+# الجمل
 # =========================================================
 
 SENTENCES = [
-    # المستوى الأول 1-25
+    # المستوى الأول 1 - 25
     ("The power went out.", "طفت الكهرباء."),
     ("I'm dying to know.", "اموت واعرف."),
     ("You distract me.", "انت دتلهيني."),
@@ -45,7 +53,7 @@ SENTENCES = [
     ("I'm sick of you.", "طكت روحي منك _ مليت منك."),
     ("Don't get me wrong.", "لا تفهمني غلط."),
 
-    # المستوى الثاني 26-50
+    # المستوى الثاني 26 - 50
     ("I overslept.", "اخذتني النومه."),
     ("All in all.", "على العموم . على كلاً."),
     ("I'm about to cry.", "راح ابجي."),
@@ -57,11 +65,11 @@ SENTENCES = [
     ("You are overreacting.", "انتِ تبالغين _ تكبرين السالفه . تسوي من الحبه كبه."),
     ("Are you deaf?", "شبيك انت اطرش؟"),
     ("Depression.", "ضوجه فول."),
-    ("He abandoned me.", "عافني _ تركني."),
-    ("I'm pregnant.", "اني حامل (كيان بالطريق)."),
+    ("He Abandoned me.", "عافني _ تركني."),
+    ("I'm pregnant.", "اني حامل ( كيان بالطريق )."),
     ("My pleasure.", "صدك جذب تدلل بعد كلبي _ جسر للطيبين _ بخدمتك."),
     ("Over my dead body.", "على جثتي _ الا اندفن بالتراب _ الا اصير جوه الكاع."),
-    ("You rock.", "انت دره . انت ورده مال الله."),
+    ("You're rock.", "انت دره . انت ورده مال الله."),
     ("It serves you right.", "طبك مرض حيل بيك زايد . تستاهل الي صار وياك."),
     ("Mark my words.", "تذكر كلامي . خليها ترجيه بأذنك."),
     ("Say that one more time.", "اذا انت زلمه عيدها."),
@@ -72,7 +80,7 @@ SENTENCES = [
     ("Keep in touch.", "لا تكطع بينا خلينا ع تواصل."),
     ("All kidding aside.", "عوف الشقه على صفحه."),
 
-    # المستوى الثالث 51-75
+    # المستوى الثالث 51 - 75
     ("We broke up.", "انفصلنا كل واحد راح بدربه."),
     ("I'm broke.", "مفلس ، على الحديده ربع مابجيبي."),
     ("You're hopeless.", "غاسل ايدي منك ، كل فايده مامنك."),
@@ -100,13 +108,12 @@ SENTENCES = [
     ("God knows.", "الله أعلم _ بس الله يدري."),
 ]
 
+
 LEVELS = {
     1: SENTENCES[0:25],
     2: SENTENCES[25:50],
     3: SENTENCES[50:75],
 }
-
-PASS_SCORE = 16
 
 
 # =========================================================
@@ -143,9 +150,14 @@ def register_student(user):
     cur = conn.cursor()
 
     cur.execute("""
-        INSERT INTO students
-        (telegram_id, username, first_name, unlocked_level)
+        INSERT INTO students (
+            telegram_id,
+            username,
+            first_name,
+            unlocked_level
+        )
         VALUES (%s, %s, %s, 1)
+
         ON CONFLICT (telegram_id)
         DO UPDATE SET
             username = EXCLUDED.username,
@@ -166,10 +178,11 @@ def get_student(telegram_id):
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT unlocked_level,
-               level1_score,
-               level2_score,
-               level3_score
+        SELECT
+            unlocked_level,
+            level1_score,
+            level2_score,
+            level3_score
         FROM students
         WHERE telegram_id = %s
     """, (telegram_id,))
@@ -186,6 +199,11 @@ def save_result(telegram_id, level, score):
     conn = get_connection()
     cur = conn.cursor()
 
+    if level not in (1, 2, 3):
+        cur.close()
+        conn.close()
+        return
+
     score_column = f"level{level}_score"
 
     cur.execute(
@@ -198,14 +216,16 @@ def save_result(telegram_id, level, score):
         (score, telegram_id)
     )
 
-    # النجاح يفتح المستوى التالي
     if score >= PASS_SCORE and level < 3:
         cur.execute("""
             UPDATE students
             SET unlocked_level =
                 GREATEST(unlocked_level, %s)
             WHERE telegram_id = %s
-        """, (level + 1, telegram_id))
+        """, (
+            level + 1,
+            telegram_id
+        ))
 
     conn.commit()
     cur.close()
@@ -216,23 +236,22 @@ def save_result(telegram_id, level, score):
 # القائمة الرئيسية
 # =========================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_main_menu(update: Update):
     user = update.effective_user
 
     register_student(user)
 
     student = get_student(user.id)
-
     unlocked = student[0]
 
-    keyboard = []
-
-    keyboard.append([
-        InlineKeyboardButton(
-            "📝 المستوى الأول",
-            callback_data="level:1"
-        )
-    ])
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "📝 المستوى الأول",
+                callback_data="level:1"
+            )
+        ]
+    ]
 
     if unlocked >= 2:
         keyboard.append([
@@ -269,26 +288,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👋 أهلاً {user.first_name or ''}\n\n"
         "🎯 لديك 3 اختبارات.\n"
         "📝 كل اختبار يحتوي على 25 سؤالاً.\n\n"
-        "🔐 لفتح المستوى التالي يجب أن تحصل على "
-        "أكثر من 60%.\n"
+        "🔐 لفتح المستوى التالي يجب أن تحصل على أكثر من 60%.\n"
         "أي 16 إجابة صحيحة من أصل 25 على الأقل.\n\n"
         "اختر المستوى 👇"
     )
 
-    if update.message:
-        await update.message.reply_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    else:
+    if update.callback_query:
         await update.callback_query.edit_message_text(
             text,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+    else:
+        await update.message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    await show_main_menu(update)
 
 
 # =========================================================
-# بدء الاختبار
+# بدء المستوى
 # =========================================================
 
 async def begin_level(query, context, level):
@@ -306,9 +331,11 @@ async def begin_level(query, context, level):
         )
         return
 
-    context.user_data["level"] = level
-    context.user_data["question_index"] = 0
-    context.user_data["score"] = 0
+    context.user_data["quiz"] = {
+        "level": level,
+        "question_index": 0,
+        "score": 0
+    }
 
     await send_question(query, context)
 
@@ -318,8 +345,17 @@ async def begin_level(query, context, level):
 # =========================================================
 
 async def send_question(query, context):
-    level = context.user_data["level"]
-    index = context.user_data["question_index"]
+    quiz = context.user_data.get("quiz")
+
+    if not quiz:
+        await query.edit_message_text(
+            "انتهت جلسة الاختبار.\n\n"
+            "أرسل /start للبدء من جديد."
+        )
+        return
+
+    level = quiz["level"]
+    index = quiz["question_index"]
 
     questions = LEVELS[level]
 
@@ -329,31 +365,37 @@ async def send_question(query, context):
 
     english, correct_arabic = questions[index]
 
-    # نأخذ 3 ترجمات خاطئة من نفس المستوى
     wrong_answers = [
         arabic
         for _, arabic in questions
         if arabic != correct_arabic
     ]
 
-    wrong_answers = random.sample(wrong_answers, 3)
+    wrong_answers = random.sample(
+        wrong_answers,
+        3
+    )
 
-    options = wrong_answers + [correct_arabic]
+    options = [
+        (correct_arabic, True)
+    ]
+
+    for answer in wrong_answers:
+        options.append(
+            (answer, False)
+        )
 
     random.shuffle(options)
 
     keyboard = []
 
-    for option in options:
-        if option == correct_arabic:
-            data = "answer:1"
-        else:
-            data = "answer:0"
+    for answer, is_correct in options:
+        value = 1 if is_correct else 0
 
         keyboard.append([
             InlineKeyboardButton(
-                option,
-                callback_data=data
+                answer,
+                callback_data=f"answer:{value}"
             )
         ])
 
@@ -374,20 +416,29 @@ async def send_question(query, context):
 # استقبال الإجابة
 # =========================================================
 
-async def answer_question(query, context, correct):
-    if "level" not in context.user_data:
+async def answer_question(
+    query,
+    context,
+    correct
+):
+    quiz = context.user_data.get("quiz")
+
+    if not quiz:
         await query.answer(
-            "ابدأ الاختبار من /start",
+            "انتهت جلسة الاختبار.",
             show_alert=True
         )
         return
 
     if correct:
-        context.user_data["score"] += 1
+        quiz["score"] += 1
 
-    context.user_data["question_index"] += 1
+    quiz["question_index"] += 1
 
-    await send_question(query, context)
+    await send_question(
+        query,
+        context
+    )
 
 
 # =========================================================
@@ -395,16 +446,24 @@ async def answer_question(query, context, correct):
 # =========================================================
 
 async def finish_quiz(query, context):
-    level = context.user_data["level"]
-    score = context.user_data["score"]
+    quiz = context.user_data["quiz"]
+
+    level = quiz["level"]
+    score = quiz["score"]
 
     total = 25
     wrong = total - score
-    percentage = round((score / total) * 100)
+    percentage = round(
+        (score / total) * 100
+    )
 
     user_id = query.from_user.id
 
-    save_result(user_id, level, score)
+    save_result(
+        user_id,
+        level,
+        score
+    )
 
     if score >= PASS_SCORE:
 
@@ -454,7 +513,6 @@ async def finish_quiz(query, context):
             ]
 
     else:
-
         text = (
             "📚 لم تجتز المستوى بعد.\n\n"
             f"📚 المستوى: {level}\n"
@@ -482,16 +540,235 @@ async def finish_quiz(query, context):
             ]
         ]
 
+    context.user_data.pop(
+        "quiz",
+        None
+    )
+
     await query.edit_message_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-    context.user_data.clear()
+
+# =========================================================
+# لوحة الإدارة
+# =========================================================
+
+async def admin_panel(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    user = update.effective_user
+
+    if user.id != ADMIN_ID:
+        await update.message.reply_text(
+            "⛔ غير مصرح لك بالدخول."
+        )
+        return
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT COUNT(*) FROM students"
+    )
+
+    students_count = cur.fetchone()[0]
+
+    cur.close()
+    conn.close()
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "👥 عدد الطلاب",
+                callback_data="admin:students"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📊 نتائج الطلاب",
+                callback_data="admin:results"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🧪 فتح المستويات للاختبار",
+                callback_data="admin:unlock"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔒 إعادة حسابي للمستوى الأول",
+                callback_data="admin:reset"
+            )
+        ]
+    ]
+
+    text = (
+        "🔐 لوحة إدارة برنامج الـ5000 جملة\n\n"
+        f"👥 عدد الطلاب المسجلين: {students_count}\n\n"
+        "اختر من القائمة 👇"
+    )
+
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
 # =========================================================
-# الأزرار
+# أزرار لوحة الإدارة
+# =========================================================
+
+async def admin_button(
+    query,
+    context,
+    data
+):
+    if query.from_user.id != ADMIN_ID:
+        await query.answer(
+            "⛔ غير مصرح لك.",
+            show_alert=True
+        )
+        return
+
+    # عدد الطلاب
+    if data == "admin:students":
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute(
+            "SELECT COUNT(*) FROM students"
+        )
+
+        count = cur.fetchone()[0]
+
+        cur.close()
+        conn.close()
+
+        await query.answer(
+            f"👥 عدد الطلاب: {count}",
+            show_alert=True
+        )
+
+        return
+
+    # نتائج الطلاب
+    if data == "admin:results":
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT
+                telegram_id,
+                first_name,
+                level1_score,
+                level2_score,
+                level3_score
+            FROM students
+            ORDER BY telegram_id DESC
+            LIMIT 20
+        """)
+
+        rows = cur.fetchall()
+
+        cur.close()
+        conn.close()
+
+        if not rows:
+            text = "📊 لا توجد نتائج حتى الآن."
+
+        else:
+            lines = [
+                "📊 آخر نتائج الطلاب\n"
+            ]
+
+            for row in rows:
+                telegram_id = row[0]
+                name = row[1] or "بدون اسم"
+                level1 = row[2]
+                level2 = row[3]
+                level3 = row[4]
+
+                lines.append(
+                    f"\n👤 {name}\n"
+                    f"🆔 {telegram_id}\n"
+                    f"1️⃣ {level1}/25\n"
+                    f"2️⃣ {level2}/25\n"
+                    f"3️⃣ {level3}/25"
+                )
+
+            text = "\n".join(lines)
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🏠 القائمة الرئيسية",
+                    callback_data="home"
+                )
+            ]
+        ]
+
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return
+
+    # فتح جميع المستويات للمدير
+    if data == "admin:unlock":
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            UPDATE students
+            SET unlocked_level = 3
+            WHERE telegram_id = %s
+        """, (ADMIN_ID,))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        await query.answer(
+            "✅ تم فتح المستويات الثلاثة لحسابك.",
+            show_alert=True
+        )
+
+        return
+
+    # إعادة حساب المدير للمستوى الأول
+    if data == "admin:reset":
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            UPDATE students
+            SET
+                unlocked_level = 1,
+                level1_score = 0,
+                level2_score = 0,
+                level3_score = 0
+            WHERE telegram_id = %s
+        """, (ADMIN_ID,))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        await query.answer(
+            "✅ تم إعادة حسابك إلى المستوى الأول.",
+            show_alert=True
+        )
+
+        return
+
+
+# =========================================================
+# التحكم بجميع الأزرار
 # =========================================================
 
 async def button_handler(
@@ -499,14 +776,24 @@ async def button_handler(
     context: ContextTypes.DEFAULT_TYPE
 ):
     query = update.callback_query
-
     data = query.data
 
-    if data == "home":
-        await query.answer()
-        await start(update, context)
+    # أزرار الإدارة
+    if data.startswith("admin:"):
+        await admin_button(
+            query,
+            context,
+            data
+        )
         return
 
+    # القائمة الرئيسية
+    if data == "home":
+        await query.answer()
+        await show_main_menu(update)
+        return
+
+    # مستوى مغلق
     if data.startswith("locked:"):
         await query.answer(
             "🔒 يجب أن تنجح في المستوى السابق أولاً.",
@@ -514,28 +801,45 @@ async def button_handler(
         )
         return
 
+    # بدء مستوى
     if data.startswith("level:"):
         await query.answer()
 
-        level = int(data.split(":")[1])
+        try:
+            level = int(
+                data.split(":")[1]
+            )
+        except (ValueError, IndexError):
+            return
+
+        if level not in LEVELS:
+            return
 
         await begin_level(
             query,
             context,
             level
         )
+
         return
 
+    # الإجابة
     if data.startswith("answer:"):
         await query.answer()
 
-        correct = int(data.split(":")[1])
+        try:
+            correct = int(
+                data.split(":")[1]
+            )
+        except (ValueError, IndexError):
+            return
 
         await answer_question(
             query,
             context,
-            correct
+            correct == 1
         )
+
         return
 
 
@@ -572,12 +876,21 @@ def main():
     )
 
     app.add_handler(
+        CommandHandler(
+            "admin",
+            admin_panel
+        )
+    )
+
+    app.add_handler(
         CallbackQueryHandler(
             button_handler
         )
     )
 
-    print("5000 English Quiz Bot is running...")
+    print(
+        "5000 English Quiz Bot is running..."
+    )
 
     app.run_polling()
 
