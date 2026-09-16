@@ -1,5 +1,7 @@
 import os
 import random
+import psycopg2
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -9,132 +11,575 @@ from telegram.ext import (
 )
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-QUESTIONS = [
-    ("What does 'How are you?' mean?", ["كيف حالك؟", "ما اسمك؟", "أين تسكن؟", "كم عمرك؟"], 0),
-    ("What does 'Good morning' mean?", ["مساء الخير", "صباح الخير", "تصبح على خير", "أهلاً وسهلاً"], 1),
-    ("What does 'Thank you' mean?", ["شكراً", "عفواً", "آسف", "من فضلك"], 0),
-    ("What does 'See you tomorrow' mean?", ["أراك اليوم", "أراك غداً", "أراك لاحقاً", "وداعاً"], 1),
-    ("What does 'I am hungry' mean?", ["أنا عطشان", "أنا متعب", "أنا جائع", "أنا سعيد"], 2),
-    ("What does 'I am tired' mean?", ["أنا متعب", "أنا خائف", "أنا جائع", "أنا مشغول"], 0),
-    ("What does 'Where are you going?' mean?", ["متى ستعود؟", "أين أنت؟", "إلى أين أنت ذاهب؟", "من أنت؟"], 2),
-    ("What does 'What is your name?' mean?", ["ما اسمك؟", "كم عمرك؟", "أين بيتك؟", "كيف حالك؟"], 0),
-    ("What does 'I don't know' mean?", ["أنا أعرف", "لا أعرف", "لا أريد", "لا أستطيع"], 1),
-    ("What does 'Please help me' mean?", ["انتظرني", "ساعدني من فضلك", "اتصل بي", "تعال معي"], 1),
-    ("What does 'Open the door' mean?", ["افتح الباب", "أغلق الباب", "افتح النافذة", "ادخل الغرفة"], 0),
-    ("What does 'Close the window' mean?", ["افتح النافذة", "أغلق الباب", "أغلق النافذة", "نظف النافذة"], 2),
-    ("What does 'I love English' mean?", ["أنا أتعلم العربية", "أنا أحب الإنجليزية", "أنا أتكلم بسرعة", "أنا أقرأ كتاباً"], 1),
-    ("What does 'Wait a minute' mean?", ["انتظر دقيقة", "تعال بسرعة", "اذهب الآن", "اجلس هنا"], 0),
-    ("What does 'Come with me' mean?", ["انتظرني", "تعال معي", "اتصل بي", "اذهب معي غداً"], 1),
-    ("What does 'How much is this?' mean?", ["ما هذا؟", "كم سعر هذا؟", "أين هذا؟", "لمن هذا؟"], 1),
-    ("What does 'I need water' mean?", ["أحتاج ماءً", "أريد طعاماً", "أحب الماء", "أشرب الماء"], 0),
-    ("What does 'I am ready' mean?", ["أنا مشغول", "أنا جاهز", "أنا متأخر", "أنا مريض"], 1),
-    ("What does 'Don't worry' mean?", ["لا تتأخر", "لا تنسَ", "لا تقلق", "لا تتكلم"], 2),
-    ("What does 'Be careful' mean?", ["كن حذراً", "كن سعيداً", "كن سريعاً", "كن هادئاً"], 0),
-    ("What does 'I understand' mean?", ["أنا أفهم", "أنا أوافق", "أنا أتذكر", "أنا أتعلم"], 0),
-    ("What does 'Can you repeat?' mean?", ["هل تستطيع الانتظار؟", "هل يمكنك التكرار؟", "هل يمكنك المساعدة؟", "هل تستطيع القراءة؟"], 1),
-    ("What does 'Speak slowly' mean?", ["تكلم بصوت عالٍ", "تكلم ببطء", "تكلم بالإنجليزية", "لا تتكلم"], 1),
-    ("What does 'Have a nice day' mean?", ["ليلة سعيدة", "أتمنى لك يوماً سعيداً", "صباح الخير", "إلى اللقاء"], 1),
-    ("What does 'See you later' mean?", ["أراك لاحقاً", "أراك غداً", "أنا متأخر", "تعال لاحقاً"], 0),
+# =========================================================
+# 75 جملة - 3 مستويات - 25 جملة لكل مستوى
+# =========================================================
+
+SENTENCES = [
+    # المستوى الأول 1-25
+    ("The power went out.", "طفت الكهرباء."),
+    ("I'm dying to know.", "اموت واعرف."),
+    ("You distract me.", "انت دتلهيني."),
+    ("Who cares?", "منو مهتم / طز."),
+    ("Don't play dumb.", "لا تغشم نفسك."),
+    ("Break a leg.", "موفق _ بالتوفيق."),
+    ("Wait your turn.", "انتظر سراك."),
+    ("Crocodile tears.", "دموع التماسيح."),
+    ("I'm exhausted.", "ميت من التعب _ منتهي."),
+    ("Eat your heart out.", "موت قهر، موت بدمك."),
+    ("Have fun.", "استمتع (تونس)."),
+    ("Behave yourself.", "تأدب _ صير آدمي."),
+    ("I feel blue.", "اني كلش ضايج."),
+    ("The choice is yours.", "القرار قرارك."),
+    ("Add fuel to the fire.", "يزيد الطين بله / اجه يكحلها عماها."),
+    ("Hug me.", "عانقني _ أشبكني."),
+    ("Are you still awake?", "بعدك كاعد ما نايم؟"),
+    ("Easy does it.", "على كيفك على راحتك _ لا تستعجل."),
+    ("Against my will.", "غصبا عليه."),
+    ("You're fired.", "انت مطرود _ توكل ع الله."),
+    ("You betrayed me.", "انت خنتني، ضحكت عليه."),
+    ("I'm starving.", "ميت من الجوع."),
+    ("Don't embarrass me.", "لا تحرجني، غيّر الموضوع."),
+    ("I'm sick of you.", "طكت روحي منك _ مليت منك."),
+    ("Don't get me wrong.", "لا تفهمني غلط."),
+
+    # المستوى الثاني 26-50
+    ("I overslept.", "اخذتني النومه."),
+    ("All in all.", "على العموم . على كلاً."),
+    ("I'm about to cry.", "راح ابجي."),
+    ("It's up to me.", "بكيفي . بمزاجي."),
+    ("I dare you.", "اتحداك _ فنك تسويها."),
+    ("I'm so depressed.", "طالعه روحي."),
+    ("Don't be stingy.", "لا تصير بخيل _ لا تصير ابو فليس."),
+    ("Control yourself.", "سيطر على روحك _ استهدي بالله _ اكعد راحه."),
+    ("You are overreacting.", "انتِ تبالغين _ تكبرين السالفه . تسوي من الحبه كبه."),
+    ("Are you deaf?", "شبيك انت اطرش؟"),
+    ("Depression.", "ضوجه فول."),
+    ("He abandoned me.", "عافني _ تركني."),
+    ("I'm pregnant.", "اني حامل (كيان بالطريق)."),
+    ("My pleasure.", "صدك جذب تدلل بعد كلبي _ جسر للطيبين _ بخدمتك."),
+    ("Over my dead body.", "على جثتي _ الا اندفن بالتراب _ الا اصير جوه الكاع."),
+    ("You rock.", "انت دره . انت ورده مال الله."),
+    ("It serves you right.", "طبك مرض حيل بيك زايد . تستاهل الي صار وياك."),
+    ("Mark my words.", "تذكر كلامي . خليها ترجيه بأذنك."),
+    ("Say that one more time.", "اذا انت زلمه عيدها."),
+    ("Let's talk turkey.", "خل نحجي طك بطك."),
+    ("Watch out.", "ديربالك يمعود انتبه."),
+    ("I have had it.", "طفح الكيل . ترى وصلت حدها."),
+    ("I'm out.", "خل انسحب . شورطني خل افلت احسن . اركض اخوي عامر."),
+    ("Keep in touch.", "لا تكطع بينا خلينا ع تواصل."),
+    ("All kidding aside.", "عوف الشقه على صفحه."),
+
+    # المستوى الثالث 51-75
+    ("We broke up.", "انفصلنا كل واحد راح بدربه."),
+    ("I'm broke.", "مفلس ، على الحديده ربع مابجيبي."),
+    ("You're hopeless.", "غاسل ايدي منك ، كل فايده مامنك."),
+    ("Don't threaten me.", "لا تهددني لا تصير سبع براسي."),
+    ("Point taken.", "وصلت الفكره _ فهمت قصدك."),
+    ("It was a special day.", "يابه جان يوم كلش مميز."),
+    ("No offense.", "ما اقصد اهينك _ مو قصدي والله."),
+    ("From now on.", "منا ورايح / منا وجاي."),
+    ("Just in case.", "بس للأحتياط."),
+    ("Don't despair.", "لا تأيس."),
+    ("Don't be a pushover.", "لا تصير ضعيف الشخصية."),
+    ("I passed out.", "فقدت الوعي _ انغمى عليه."),
+    ("One of a kind.", "ماله مثيل _ ماكو منه."),
+    ("You're in my thoughts.", "انت على بالي."),
+    ("Pray for me.", "ادعيلي."),
+    ("I can't stand you.", "ما اطيقك _ ولا تنبلع."),
+    ("I dyed my hair.", "صبغت شعري."),
+    ("Cheer up.", "افرح هي الدنيا خلصانه."),
+    ("I feel guilty.", "حسيت بذنبي _ حسيت بغلطي."),
+    ("Pull over.", "اركن السيارة _ اطبك على صفحه."),
+    ("Rest in peace.", "الله يرحمه."),
+    ("I'm furious.", "روحي واصله لخشمي _ ترى روحي طافره _ معطب."),
+    ("Dig in.", "مد ايدك للأكل _ تفضل."),
+    ("Here you go.", "هاك اخذ."),
+    ("God knows.", "الله أعلم _ بس الله يدري."),
 ]
 
+LEVELS = {
+    1: SENTENCES[0:25],
+    2: SENTENCES[25:50],
+    3: SENTENCES[50:75],
+}
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[
-        InlineKeyboardButton("📝 ابدأ اختبار اليوم", callback_data="start_quiz")
-    ]]
+PASS_SCORE = 16
 
-    await update.message.reply_text(
-        "📚 برنامج الـ5000 جملة الإنجليزية\n\n"
-        "مرحباً بك في الاختبار التجريبي 👋\n\n"
-        "📝 عدد الأسئلة: 25\n"
-        "🎯 اختر الترجمة الصحيحة لكل جملة.\n\n"
-        "اضغط الزر للبدء 👇",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+
+# =========================================================
+# قاعدة البيانات
+# =========================================================
+
+def get_connection():
+    return psycopg2.connect(DATABASE_URL)
+
+
+def setup_database():
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS students (
+            telegram_id BIGINT PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            unlocked_level INTEGER DEFAULT 1,
+            level1_score INTEGER DEFAULT 0,
+            level2_score INTEGER DEFAULT 0,
+            level3_score INTEGER DEFAULT 0
+        )
+    """)
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def register_student(user):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO students
+        (telegram_id, username, first_name, unlocked_level)
+        VALUES (%s, %s, %s, 1)
+        ON CONFLICT (telegram_id)
+        DO UPDATE SET
+            username = EXCLUDED.username,
+            first_name = EXCLUDED.first_name
+    """, (
+        user.id,
+        user.username,
+        user.first_name,
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_student(telegram_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT unlocked_level,
+               level1_score,
+               level2_score,
+               level3_score
+        FROM students
+        WHERE telegram_id = %s
+    """, (telegram_id,))
+
+    result = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    return result
+
+
+def save_result(telegram_id, level, score):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    score_column = f"level{level}_score"
+
+    cur.execute(
+        f"""
+        UPDATE students
+        SET {score_column} =
+            GREATEST({score_column}, %s)
+        WHERE telegram_id = %s
+        """,
+        (score, telegram_id)
     )
 
+    # النجاح يفتح المستوى التالي
+    if score >= PASS_SCORE and level < 3:
+        cur.execute("""
+            UPDATE students
+            SET unlocked_level =
+                GREATEST(unlocked_level, %s)
+            WHERE telegram_id = %s
+        """, (level + 1, telegram_id))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+# =========================================================
+# القائمة الرئيسية
+# =========================================================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    register_student(user)
+
+    student = get_student(user.id)
+
+    unlocked = student[0]
+
+    keyboard = []
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "📝 المستوى الأول",
+            callback_data="level:1"
+        )
+    ])
+
+    if unlocked >= 2:
+        keyboard.append([
+            InlineKeyboardButton(
+                "📝 المستوى الثاني 🔓",
+                callback_data="level:2"
+            )
+        ])
+    else:
+        keyboard.append([
+            InlineKeyboardButton(
+                "🔒 المستوى الثاني",
+                callback_data="locked:2"
+            )
+        ])
+
+    if unlocked >= 3:
+        keyboard.append([
+            InlineKeyboardButton(
+                "📝 المستوى الثالث 🔓",
+                callback_data="level:3"
+            )
+        ])
+    else:
+        keyboard.append([
+            InlineKeyboardButton(
+                "🔒 المستوى الثالث",
+                callback_data="locked:3"
+            )
+        ])
+
+    text = (
+        "📚 برنامج الـ5000 جملة الإنجليزية\n\n"
+        f"👋 أهلاً {user.first_name or ''}\n\n"
+        "🎯 لديك 3 اختبارات.\n"
+        "📝 كل اختبار يحتوي على 25 سؤالاً.\n\n"
+        "🔐 لفتح المستوى التالي يجب أن تحصل على "
+        "أكثر من 60%.\n"
+        "أي 16 إجابة صحيحة من أصل 25 على الأقل.\n\n"
+        "اختر المستوى 👇"
+    )
+
+    if update.message:
+        await update.message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        await update.callback_query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+
+# =========================================================
+# بدء الاختبار
+# =========================================================
+
+async def begin_level(query, context, level):
+    user = query.from_user
+
+    register_student(user)
+
+    student = get_student(user.id)
+    unlocked = student[0]
+
+    if level > unlocked:
+        await query.answer(
+            "🔒 يجب أن تنجح في المستوى السابق أولاً.",
+            show_alert=True
+        )
+        return
+
+    context.user_data["level"] = level
+    context.user_data["question_index"] = 0
+    context.user_data["score"] = 0
+
+    await send_question(query, context)
+
+
+# =========================================================
+# إرسال السؤال
+# =========================================================
 
 async def send_question(query, context):
-    index = context.user_data["index"]
+    level = context.user_data["level"]
+    index = context.user_data["question_index"]
 
-    if index >= len(QUESTIONS):
+    questions = LEVELS[level]
+
+    if index >= len(questions):
         await finish_quiz(query, context)
         return
 
-    question, options, correct = QUESTIONS[index]
+    english, correct_arabic = questions[index]
 
-    choices = list(enumerate(options))
-    random.shuffle(choices)
-
-    keyboard = [
-        [InlineKeyboardButton(text, callback_data=f"answer:{original_index}")]
-        for original_index, text in choices
+    # نأخذ 3 ترجمات خاطئة من نفس المستوى
+    wrong_answers = [
+        arabic
+        for _, arabic in questions
+        if arabic != correct_arabic
     ]
 
+    wrong_answers = random.sample(wrong_answers, 3)
+
+    options = wrong_answers + [correct_arabic]
+
+    random.shuffle(options)
+
+    keyboard = []
+
+    for option in options:
+        if option == correct_arabic:
+            data = "answer:1"
+        else:
+            data = "answer:0"
+
+        keyboard.append([
+            InlineKeyboardButton(
+                option,
+                callback_data=data
+            )
+        ])
+
+    text = (
+        f"📚 المستوى {level}\n"
+        f"📝 السؤال {index + 1} من 25\n\n"
+        f"🇺🇸 {english}\n\n"
+        "اختر الترجمة الصحيحة 👇"
+    )
+
     await query.edit_message_text(
-        f"📖 السؤال {index + 1} من 25\n\n"
-        f"🇬🇧 {question}",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
+# =========================================================
+# استقبال الإجابة
+# =========================================================
+
+async def answer_question(query, context, correct):
+    if "level" not in context.user_data:
+        await query.answer(
+            "ابدأ الاختبار من /start",
+            show_alert=True
+        )
+        return
+
+    if correct:
+        context.user_data["score"] += 1
+
+    context.user_data["question_index"] += 1
+
+    await send_question(query, context)
+
+
+# =========================================================
+# نهاية الاختبار
+# =========================================================
+
 async def finish_quiz(query, context):
+    level = context.user_data["level"]
     score = context.user_data["score"]
-    total = len(QUESTIONS)
+
+    total = 25
     wrong = total - score
     percentage = round((score / total) * 100)
 
-    keyboard = [[
-        InlineKeyboardButton("🔄 إعادة الاختبار", callback_data="start_quiz")
-    ]]
+    user_id = query.from_user.id
+
+    save_result(user_id, level, score)
+
+    if score >= PASS_SCORE:
+
+        if level < 3:
+            text = (
+                "🎉 مبروك، نجحت!\n\n"
+                f"📚 المستوى: {level}\n"
+                f"✅ الصحيحة: {score}/25\n"
+                f"❌ الخاطئة: {wrong}/25\n"
+                f"📊 النتيجة: {percentage}%\n\n"
+                f"🔓 تم فتح المستوى {level + 1} لك."
+            )
+
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        f"🚀 ابدأ المستوى {level + 1}",
+                        callback_data=f"level:{level + 1}"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🏠 القائمة الرئيسية",
+                        callback_data="home"
+                    )
+                ]
+            ]
+
+        else:
+            text = (
+                "🏆 مبروك!\n\n"
+                "لقد أكملت المستويات الثلاثة بنجاح 🎉\n\n"
+                f"✅ الصحيحة: {score}/25\n"
+                f"❌ الخاطئة: {wrong}/25\n"
+                f"📊 النتيجة: {percentage}%\n\n"
+                "📚 أكملت أول 75 جملة من برنامج "
+                "الـ5000 جملة الإنجليزية."
+            )
+
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "🏠 القائمة الرئيسية",
+                        callback_data="home"
+                    )
+                ]
+            ]
+
+    else:
+
+        text = (
+            "📚 لم تجتز المستوى بعد.\n\n"
+            f"📚 المستوى: {level}\n"
+            f"✅ الصحيحة: {score}/25\n"
+            f"❌ الخاطئة: {wrong}/25\n"
+            f"📊 النتيجة: {percentage}%\n\n"
+            "🔒 المستوى التالي ما زال مغلقاً.\n\n"
+            "تحتاج إلى 16 إجابة صحيحة على الأقل "
+            "للانتقال للمستوى التالي.\n\n"
+            "راجع الجمل ثم حاول مرة أخرى 💪"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔄 إعادة الاختبار",
+                    callback_data=f"level:{level}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🏠 القائمة الرئيسية",
+                    callback_data="home"
+                )
+            ]
+        ]
 
     await query.edit_message_text(
-        "🏁 انتهى الاختبار!\n\n"
-        f"✅ الإجابات الصحيحة: {score}/{total}\n"
-        f"❌ الإجابات الخاطئة: {wrong}/{total}\n"
-        f"📊 النتيجة: {percentage}%\n\n"
-        "📚 برنامج الـ5000 جملة الإنجليزية",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+    context.user_data.clear()
 
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# =========================================================
+# الأزرار
+# =========================================================
+
+async def button_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     query = update.callback_query
-    await query.answer()
 
-    if query.data == "start_quiz":
-        context.user_data["index"] = 0
-        context.user_data["score"] = 0
-        await send_question(query, context)
+    data = query.data
+
+    if data == "home":
+        await query.answer()
+        await start(update, context)
         return
 
-    if query.data.startswith("answer:"):
-        index = context.user_data.get("index", 0)
+    if data.startswith("locked:"):
+        await query.answer(
+            "🔒 يجب أن تنجح في المستوى السابق أولاً.",
+            show_alert=True
+        )
+        return
 
-        if index >= len(QUESTIONS):
-            return
+    if data.startswith("level:"):
+        await query.answer()
 
-        selected = int(query.data.split(":")[1])
-        correct = QUESTIONS[index][2]
+        level = int(data.split(":")[1])
 
-        if selected == correct:
-            context.user_data["score"] += 1
+        await begin_level(
+            query,
+            context,
+            level
+        )
+        return
 
-        context.user_data["index"] += 1
-        await send_question(query, context)
+    if data.startswith("answer:"):
+        await query.answer()
 
+        correct = int(data.split(":")[1])
+
+        await answer_question(
+            query,
+            context,
+            correct
+        )
+        return
+
+
+# =========================================================
+# تشغيل البوت
+# =========================================================
 
 def main():
+
     if not TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
+        raise RuntimeError(
+            "TELEGRAM_BOT_TOKEN is missing."
+        )
 
-    application = Application.builder().token(TOKEN).build()
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL is missing."
+        )
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(buttons))
+    setup_database()
+
+    app = (
+        Application
+        .builder()
+        .token(TOKEN)
+        .build()
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "start",
+            start
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            button_handler
+        )
+    )
 
     print("5000 English Quiz Bot is running...")
-    application.run_polling()
+
+    app.run_polling()
 
 
 if __name__ == "__main__":
